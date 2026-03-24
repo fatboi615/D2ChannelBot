@@ -1,0 +1,348 @@
+/**
+ *  @filename    ChannelBot.dbj
+ *  @author      based on kolton/theBGuy D2BotChannel structure
+ *  @desc        Channel-sitting run tracker bot. Stays in channel at all times,
+ *               never creates or joins games. Tracks runs announced by leader.
+ */
+
+include("StarterConfig.js");
+
+// ============================================================================
+// CONFIG — edit these to match your setup
+// ============================================================================
+var CB_Channel           = "YourChannelName";  // Battle.net channel to sit in
+var CB_LeaderAccount     = "YourAccountName";  // only this account can use leader commands
+var CB_DataFilePath      = "data/ChannelBotStats.json";
+var CB_AnnounceMilestone = true;
+var CB_MilestoneEvery    = 2;
+var CB_GameAnnounceFormat = "** Next Game: {game} | Run #{runs} **";
+var CB_MilestoneFormat    = "** {runs} total runs completed! **";
+var CB_StartupMessage     = "** Run tracker online. Leader must !login to begin. **";
+var CB_LoginSuccess       = "** Leader authenticated. Tracking active. **";
+var CB_LogoutSuccess      = "** Leader logged out. Tracking paused. **";
+var CB_GameAnnouncePrefix = "next game is";  // case-insensitive
+
+// Commands
+var CB_CMD_LOGIN  = "!login";
+var CB_CMD_LOGOUT = "!logout";
+var CB_CMD_RUNS   = "!runs";
+var CB_CMD_GAME   = "!game";
+var CB_CMD_RESET  = "!reset";
+var CB_CMD_HELP   = "!help";
+
+// ============================================================================
+// REQUIRED INCLUDES (matching D2BotChannel structure)
+// ============================================================================
+include("json2.js");
+include("polyfill.js");
+include("OOG.js");
+include("common/misc.js");
+include("common/util.js");
+include("common/prototypes.js");
+
+let sdk      = require("./modules/sdk");
+let Controls = require("./modules/Control");
+
+if (typeof AdvancedConfig[me.profile] === "object") {
+  Object.assign(Starter.Config, AdvancedConfig[me.profile]);
+}
+
+// ============================================================================
+// DATA HELPERS
+// ============================================================================
+function cbDefaultData() {
+  return { totalRuns: 0, lastGame: { name: "", time: 0 } };
+}
+
+function cbReadData() {
+  try {
+    if (FileTools.exists(CB_DataFilePath)) {
+      var raw = FileTools.readText(CB_DataFilePath);
+      if (raw && raw.length > 0) {
+        return JSON.parse(raw);
+      }
+    }
+  } catch (e) {
+    D2Bot.printToConsole("ChannelBot: read error - " + e, sdk.colors.D2Bot.Gray);
+  }
+  return cbDefaultData();
+}
+
+function cbWriteData(data) {
+  try {
+    FileTools.writeText(CB_DataFilePath, JSON.stringify(data, null, 2));
+    return true;
+  } catch (e) {
+    D2Bot.printToConsole("ChannelBot: write error - " + e, sdk.colors.D2Bot.Gray);
+    return false;
+  }
+}
+
+function cbUpdateData(updateFn) {
+  var data = cbReadData();
+  updateFn(data);
+  cbWriteData(data);
+  return data;
+}
+
+function cbFormat(template, values) {
+  return template.replace(/\{(\w+)\}/g, function (match, key) {
+    return values.hasOwnProperty(key) ? values[key] : match;
+  });
+}
+
+// ============================================================================
+// SESSION STATE
+// ============================================================================
+var leaderLoggedIn  = false;
+var lastTotalRuns   = -1;
+var lastMilestone   = 0;
+var announcedStart  = false;
+
+// ============================================================================
+// CHAT EVENT HANDLER
+// ============================================================================
+addEventListener("chatmsg", function (nick, msg) {
+  var isLeader = nick.toLowerCase() === CB_LeaderAccount.toLowerCase();
+  var raw = msg.trim();
+  var m   = raw.toLowerCase();
+
+  // PUBLIC commands — anyone
+  if (m === CB_CMD_RUNS) {
+    var d = cbReadData();
+    say("Total runs completed: " + (d ? d.totalRuns : 0));
+    return;
+  }
+
+  if (m === CB_CMD_GAME) {
+    var d = cbReadData();
+    if (d && d.lastGame && d.lastGame.name) {
+      say("Last game: " + d.lastGame.name);
+    } else {
+      say("No game info recorded yet.");
+    }
+    return;
+  }
+
+  // Silently ignore non-leaders beyond this point
+  if (!isLeader) return;
+
+  // !login — leader only, works before logged in
+  if (m === CB_CMD_LOGIN) {
+    if (leaderLoggedIn) {
+      say("** Already logged in. **");
+    } else {
+      leaderLoggedIn = true;
+      D2Bot.printToConsole("ChannelBot: Leader logged in: " + nick, sdk.colors.D2Bot.Gray);
+      say(CB_LoginSuccess);
+    }
+    return;
+  }
+
+  // All remaining commands require active session
+  if (!leaderLoggedIn) return;
+
+  if (m === CB_CMD_LOGOUT) {
+    leaderLoggedIn = false;
+    D2Bot.printToConsole("ChannelBot: Leader logged out: " + nick, sdk.colors.D2Bot.Gray);
+    say(CB_LogoutSuccess);
+    return;
+  }
+
+  if (m === CB_CMD_HELP) {
+    say("Public: " + CB_CMD_RUNS + " | " + CB_CMD_GAME +
+        "  ||  Leader: " + CB_CMD_RESET + " | " + CB_CMD_LOGOUT);
+    return;
+  }
+
+  if (m === CB_CMD_RESET) {
+    cbWriteData(cbDefaultData());
+    lastTotalRuns = 0;
+    lastMilestone = 0;
+    say("** Run stats have been reset. **");
+    return;
+  }
+
+  // "Next game is <gamename>" — only first word used, rest ignored
+  if (m.indexOf(CB_GameAnnouncePrefix) === 0) {
+    var remainder = raw.substring(CB_GameAnnouncePrefix.length).trim();
+
+    if (!remainder) {
+      say("** Couldn't parse game name. Format: Next game is <gamename> **");
+      return;
+    }
+
+    var gameName = remainder.split(/\s+/)[0];
+
+    var data = cbUpdateData(function (d) {
+      d.totalRuns += 1;
+      d.lastGame   = { name: gameName, time: getTickCount() };
+    });
+
+    var runs = data ? data.totalRuns : "?";
+    say(cbFormat(CB_GameAnnounceFormat, { game: gameName, runs: runs }));
+    D2Bot.printToConsole("ChannelBot: Game announced: " + gameName + " run #" + runs, sdk.colors.D2Bot.Gray);
+
+    // Milestone check
+    if (CB_AnnounceMilestone) {
+      var nextMilestone = Math.floor(runs / CB_MilestoneEvery) * CB_MilestoneEvery;
+      if (nextMilestone > lastMilestone && nextMilestone <= runs) {
+        say(cbFormat(CB_MilestoneFormat, { runs: nextMilestone }));
+        lastMilestone = nextMilestone;
+      }
+    }
+
+    lastTotalRuns = runs;
+    return;
+  }
+});
+
+// ============================================================================
+// LOCATION HANDLER — modeled after D2BotChannel, but never creates/joins games
+// ============================================================================
+function locationAction(location) {
+  switch (location) {
+    case sdk.game.locations.Lobby:
+      D2Bot.updateStatus("Lobby");
+      Controls.LobbyEnterChat.click();
+      break;
+
+    case sdk.game.locations.LobbyChat:
+      D2Bot.updateStatus("Channel: " + CB_Channel);
+
+      // Join our channel if needed
+      if (!announcedStart) {
+        ControlAction.joinChannel(CB_Channel);
+        delay(1000);
+        say(CB_StartupMessage);
+        announcedStart = true;
+      }
+      break;
+
+    // Screens we need to pass through to get online — let Starter handle them
+    case sdk.game.locations.MainMenu:
+    case sdk.game.locations.Login:
+    case sdk.game.locations.CharSelect:
+    case sdk.game.locations.SplashScreen:
+      Starter.LocationEvents.login();
+      break;
+
+    case sdk.game.locations.LoginError:
+    case sdk.game.locations.InvalidCdKey:
+    case sdk.game.locations.CdKeyInUse:
+      Starter.LocationEvents.loginError();
+      break;
+
+    case sdk.game.locations.LoginUnableToConnect:
+    case sdk.game.locations.TcpIpUnableToConnect:
+      Starter.LocationEvents.unableToConnect();
+      break;
+
+    case sdk.game.locations.RealmDown:
+      Starter.LocationEvents.realmDown();
+      break;
+
+    case sdk.game.locations.Disconnected:
+    case sdk.game.locations.LobbyLostConnection:
+      D2Bot.updateStatus("Disconnected");
+      announcedStart = false; // re-announce startup message on reconnect
+      delay(1000);
+      Controls.OkCentered.click();
+      break;
+
+    case sdk.game.locations.CharSelectPleaseWait:
+      !Starter.locationTimeout(Starter.Config.PleaseWaitTimeout * 1e3, location) && Controls.OkCentered.click();
+      break;
+
+    case sdk.game.locations.MainMenuConnecting:
+      !Starter.locationTimeout(Starter.Config.ConnectingTimeout * 1e3, location) && Controls.LoginCancelWait.click();
+      break;
+
+    case sdk.game.locations.LobbyPleaseWait:
+      !Starter.locationTimeout(Starter.Config.PleaseWaitTimeout * 1e3, location) && Controls.OkCentered.click();
+      break;
+
+    case sdk.game.locations.CharSelectConnecting:
+    case sdk.game.locations.CharSelectNoChars:
+      Starter.LocationEvents.charSelectError();
+      break;
+
+    case sdk.game.locations.GatewaySelect:
+      Controls.GatewayCancel.click();
+      break;
+
+    case sdk.game.locations.OtherMultiplayer:
+      Starter.LocationEvents.otherMultiplayerSelect();
+      break;
+
+    // Game creation/join screens — cancel out immediately, never proceed
+    case sdk.game.locations.CreateGame:
+    case sdk.game.locations.WaitingInLine:
+      Controls.CancelCreateGame.click();
+      break;
+
+    case sdk.game.locations.JoinGame:
+      Controls.CancelJoinGame.click();
+      break;
+
+    case sdk.game.locations.GameNameExists:
+    case sdk.game.locations.GameDoesNotExist:
+    case sdk.game.locations.GameIsFull:
+    case sdk.game.locations.ServerDown:
+    case sdk.game.locations.Ladder:
+    case sdk.game.locations.ChannelList:
+    case sdk.game.locations.SelectDifficultySP:
+      break;
+
+    default:
+      if (location !== undefined) {
+        D2Bot.printToConsole("ChannelBot: Unhandled location " + location, sdk.colors.D2Bot.Gray);
+        delay(500);
+      }
+      break;
+  }
+}
+
+// ============================================================================
+// MAIN
+// ============================================================================
+function main() {
+  addEventListener("copydata", Starter.receiveCopyData);
+  addEventListener("scriptmsg", Starter.scriptMsgEvent);
+
+  while (!Starter.handle) {
+    delay(100);
+  }
+
+  DataFile.updateStats("handle", Starter.handle);
+  D2Bot.init();
+  load("tools/heartbeat.js");
+
+  while (!Object.keys(Starter.gameInfo).length) {
+    D2Bot.requestGameInfo();
+    delay(500);
+  }
+
+  while (!Object.keys(Starter.profileInfo).length) {
+    D2Bot.getProfile();
+    delay(500);
+  }
+
+  // Snapshot current state on startup
+  var initData  = cbReadData();
+  lastTotalRuns = initData.totalRuns;
+  lastMilestone = Math.floor(initData.totalRuns / CB_MilestoneEvery) * CB_MilestoneEvery;
+  D2Bot.printToConsole("ChannelBot: Initialized. Runs on record: " + lastTotalRuns, sdk.colors.D2Bot.Gray);
+
+  // Main loop — never enters a game
+  while (true) {
+    while (me.ingame) {
+      // Should never happen, but if it does just wait it out
+      delay(1000);
+    }
+
+    locationAction(getLocation());
+    D2Bot.updateStatus("ChannelBot | " + CB_Channel + " | Runs: " + lastTotalRuns);
+    delay(1000);
+  }
+}
