@@ -11,10 +11,10 @@ include("critical.js"); // required
 includeSystemLibs();
 
 // ============================================================================
-// CONFIG — edit these to match your setup
+// CONFIG
 // ============================================================================
-var CB_Channel            = "channelname"; // B.net channel to sit in
-var CB_LeaderAccount      = "change*me"; //  charname*accountname
+var CB_Channel            = "OP CHAOSBAAL";
+var CB_LeaderAccount      = "CoopPoop*CooperCBRunz"; // charname*accountname
 var CB_DataFilePath       = "data/ChannelBotStats.json";
 var CB_AnnounceMilestone  = true;
 var CB_MilestoneEvery     = 3;
@@ -22,11 +22,12 @@ var CB_GameAnnounceFormat = "** Next Game: {game} | Run #{runs} **";
 var CB_MilestoneFormat    = "** {runs} total runs completed! **";
 var CB_StartupMessage     = "** Run tracker online. Leader must !login to begin. **";
 var CB_LogoutSuccess      = "** Leader logged out. Tracking paused. **";
-var CB_GameAnnouncePrefix = "Next game is"; // case-insensitive
-var CB_AnnounceGameList   = true;
-var CB_GameListInterval   = 3 * 60 * 1000; // 3 minutes in milliseconds
-var CB_GameListFormat     = "** Recent games: {games} **";
-var CB_MaxGamesInList     = 5;
+var CB_GameAnnouncePrefix = "next game is"; // must be lowercase
+
+// Periodic game list announce — posts recent games to channel every X ms
+var CB_AnnounceGameList  = true;
+var CB_GameListInterval  = 3 * 60 * 1000; // every 3 minutes
+var CB_MaxGamesInList    = 5;
 
 // Commands
 var CB_CMD_LOGIN  = "!login";
@@ -56,7 +57,7 @@ if (DataFile.init()) {
 // DATA HELPERS
 // ============================================================================
 function cbDefaultData() {
-  return { totalRuns: 0, lastGame: { name: "", time: 0 } };
+  return { totalRuns: 0, lastGame: { name: "", time: 0 }, recentGames: [] };
 }
 
 function cbReadData() {
@@ -64,7 +65,10 @@ function cbReadData() {
     if (FileTools.exists(CB_DataFilePath)) {
       var raw = FileTools.readText(CB_DataFilePath);
       if (raw && raw.length > 0) {
-        return JSON.parse(raw);
+        var parsed = JSON.parse(raw);
+        // ensure recentGames exists on older data files
+        if (!parsed.recentGames) parsed.recentGames = [];
+        return parsed;
       }
     }
   } catch (e) {
@@ -99,9 +103,10 @@ function cbFormat(template, values) {
 // ============================================================================
 // SESSION STATE
 // ============================================================================
-var leaderLoggedIn = false;
-var lastTotalRuns  = -1;
-var lastMilestone  = 0;
+var leaderLoggedIn  = false;
+var lastTotalRuns   = -1;
+var lastMilestone   = 0;
+var lastGameListTick = 0;
 
 // ============================================================================
 // CHAT EVENT HANDLER
@@ -121,7 +126,7 @@ addEventListener("chatmsg", function (nick, msg) {
   if (m === CB_CMD_GAME) {
     var d = cbReadData();
     if (d && d.lastGame && d.lastGame.name) {
-      say("Last game: " + d.lastGame.name);
+      say("Last game: " + d.lastGame.name + " | Total runs: " + d.totalRuns);
     } else {
       say("No game info recorded yet.");
     }
@@ -138,14 +143,11 @@ addEventListener("chatmsg", function (nick, msg) {
     } else {
       leaderLoggedIn = true;
       D2Bot.printToConsole("ChannelBot: Leader logged in: " + nick, sdk.colors.D2Bot.Gray);
-
-      // Welcome message with run count and milestone progress
-      var ld       = cbReadData();
-      var lRuns    = ld ? ld.totalRuns : 0;
-      var lNext    = Math.ceil((lRuns + 1) / CB_MilestoneEvery) * CB_MilestoneEvery;
-      var lToGo    = lNext - lRuns;
-      say("** Welcome, " + nick + "! **");
-      say("** Runs completed: " + lRuns + " | Next milestone: run " + lNext + " (" + lToGo + " to go) **");
+      var ld    = cbReadData();
+      var lRuns = ld ? ld.totalRuns : 0;
+      var lNext = (Math.floor(lRuns / CB_MilestoneEvery) + 1) * CB_MilestoneEvery;
+      var lToGo = lNext - lRuns;
+      say("** Welcome, " + nick + "! Runs completed: " + lRuns + " | Next milestone: run " + lNext + " (" + lToGo + " to go) **");
     }
     return;
   }
@@ -168,8 +170,8 @@ addEventListener("chatmsg", function (nick, msg) {
 
   if (m === CB_CMD_RESET) {
     cbWriteData(cbDefaultData());
-    lastTotalRuns = 0;
-    lastMilestone = 0;
+    lastTotalRuns  = 0;
+    lastMilestone  = 0;
     say("** Run stats have been reset. **");
     return;
   }
@@ -188,6 +190,11 @@ addEventListener("chatmsg", function (nick, msg) {
     var data = cbUpdateData(function (d) {
       d.totalRuns += 1;
       d.lastGame   = { name: gameName, time: getTickCount() };
+      // keep a rolling list of recent games
+      d.recentGames.unshift(gameName);
+      if (d.recentGames.length > CB_MaxGamesInList) {
+        d.recentGames = d.recentGames.slice(0, CB_MaxGamesInList);
+      }
     });
 
     var runs = data ? data.totalRuns : "?";
@@ -196,8 +203,8 @@ addEventListener("chatmsg", function (nick, msg) {
 
     // Milestone check
     if (CB_AnnounceMilestone) {
-      var nextMilestone = Math.ceil(runs / CB_MilestoneEvery) * CB_MilestoneEvery;
-      if (nextMilestone > lastMilestone && nextMilestone <= runs) {
+      var nextMilestone = (Math.floor((runs - 1) / CB_MilestoneEvery) + 1) * CB_MilestoneEvery;
+      if (runs === nextMilestone && nextMilestone > lastMilestone) {
         say(cbFormat(CB_MilestoneFormat, { runs: runs }));
         lastMilestone = nextMilestone;
       }
@@ -207,6 +214,21 @@ addEventListener("chatmsg", function (nick, msg) {
     return;
   }
 });
+
+// ============================================================================
+// PERIODIC GAME LIST ANNOUNCE
+// Call this from the main sit loop every tick
+// ============================================================================
+function cbCheckGameListAnnounce() {
+  if (!CB_AnnounceGameList || !leaderLoggedIn) return;
+  if (getTickCount() - lastGameListTick < CB_GameListInterval) return;
+
+  var d = cbReadData();
+  if (d && d.recentGames && d.recentGames.length > 0) {
+    say("** Recent games: " + d.recentGames.join(", ") + " | Total runs: " + d.totalRuns + " **");
+  }
+  lastGameListTick = getTickCount();
+}
 
 // ============================================================================
 // HELPER: join a channel using the Channel button + text box in lobby chat
@@ -245,10 +267,10 @@ const locationAction = (function () {
       switch (location) {
 
         case sdk.game.locations.Lobby:
-          // Control.LobbyEnterChat = Button, 27, 480, 120, 20
           D2Bot.updateStatus("Lobby - clicking Enter Chat");
           D2Bot.printToConsole("ChannelBot: Lobby screen, clicking Enter Chat.", sdk.colors.D2Bot.Gray);
           delay(1000);
+          // Control.LobbyEnterChat = Button, 27, 480, 120, 20
           var enterChat = getControl(sdk.controls.Button, 27, 480, 120, 20);
           if (enterChat) enterChat.click();
           delay(1000);
@@ -259,27 +281,30 @@ const locationAction = (function () {
           cbJoinChannel(CB_Channel);
           delay(1000);
           say(CB_StartupMessage);
+          lastGameListTick = getTickCount(); // reset timer so it doesn't fire immediately
 
+          // Sit here — periodic announce runs in this loop
           while (getLocation() === sdk.game.locations.LobbyChat) {
             D2Bot.updateStatus("ChannelBot | " + CB_Channel + " | Runs: " + lastTotalRuns);
+            cbCheckGameListAnnounce();
             delay(5000);
           }
           break;
 
         case sdk.game.locations.CreateGame:
         case sdk.game.locations.WaitingInLine:
-          // Control.CancelCreateGame = Button, 433, 433, 96, 32
           D2Bot.printToConsole("ChannelBot: Cancelling game creation.", sdk.colors.D2Bot.Gray);
           delay(500);
+          // Control.CancelCreateGame = Button, 433, 433, 96, 32
           var cancelBtn = getControl(sdk.controls.Button, 433, 433, 96, 32);
           if (cancelBtn) cancelBtn.click();
           delay(500);
           break;
 
         case sdk.game.locations.JoinGame:
-          // Control.CancelJoinGame = Button, 433, 433, 96, 32
           D2Bot.printToConsole("ChannelBot: Cancelling join game.", sdk.colors.D2Bot.Gray);
           delay(500);
+          // Control.CancelJoinGame = Button, 433, 433, 96, 32
           var cancelBtn = getControl(sdk.controls.Button, 433, 433, 96, 32);
           if (cancelBtn) cancelBtn.click();
           delay(500);
