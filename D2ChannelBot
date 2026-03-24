@@ -1,26 +1,29 @@
 /**
  *  @filename    ChannelBot.dbj
- *  @author      based on kolton/theBGuy D2BotChannel structure
+ *  @author      based on kolton/theBGuy D2BotLead structure
  *  @desc        Channel-sitting run tracker bot. Stays in channel at all times,
  *               never creates or joins games. Tracks runs announced by leader.
+ *
+ *  @typedef {import("./sdk/globals")}
  */
 
-include("StarterConfig.js");
+include("critical.js"); // required
+includeSystemLibs();
 
 // ============================================================================
 // CONFIG — edit these to match your setup
 // ============================================================================
-var CB_Channel           = "YourChannelName";  // Battle.net channel to sit in
-var CB_LeaderAccount     = "YourAccountName";  // only this account can use leader commands
-var CB_DataFilePath      = "data/ChannelBotStats.json";
-var CB_AnnounceMilestone = true;
-var CB_MilestoneEvery    = 2;
+var CB_Channel            = "YourChannelName"; // B.net channel to sit in
+var CB_LeaderAccount      = "YourAccountName"; // your B.net account name (leader only)
+var CB_DataFilePath       = "data/ChannelBotStats.json";
+var CB_AnnounceMilestone  = true;
+var CB_MilestoneEvery     = 10;
 var CB_GameAnnounceFormat = "** Next Game: {game} | Run #{runs} **";
 var CB_MilestoneFormat    = "** {runs} total runs completed! **";
 var CB_StartupMessage     = "** Run tracker online. Leader must !login to begin. **";
 var CB_LoginSuccess       = "** Leader authenticated. Tracking active. **";
 var CB_LogoutSuccess      = "** Leader logged out. Tracking paused. **";
-var CB_GameAnnouncePrefix = "next game is";  // case-insensitive
+var CB_GameAnnouncePrefix = "next game is"; // case-insensitive
 
 // Commands
 var CB_CMD_LOGIN  = "!login";
@@ -29,23 +32,6 @@ var CB_CMD_RUNS   = "!runs";
 var CB_CMD_GAME   = "!game";
 var CB_CMD_RESET  = "!reset";
 var CB_CMD_HELP   = "!help";
-
-// ============================================================================
-// REQUIRED INCLUDES (matching D2BotChannel structure)
-// ============================================================================
-include("json2.js");
-include("polyfill.js");
-include("OOG.js");
-include("common/misc.js");
-include("common/util.js");
-include("common/prototypes.js");
-
-let sdk      = require("./modules/sdk");
-let Controls = require("./modules/Control");
-
-if (typeof AdvancedConfig[me.profile] === "object") {
-  Object.assign(Starter.Config, AdvancedConfig[me.profile]);
-}
 
 // ============================================================================
 // DATA HELPERS
@@ -94,10 +80,10 @@ function cbFormat(template, values) {
 // ============================================================================
 // SESSION STATE
 // ============================================================================
-var leaderLoggedIn  = false;
-var lastTotalRuns   = -1;
-var lastMilestone   = 0;
-var announcedStart  = false;
+var leaderLoggedIn = false;
+var lastTotalRuns  = -1;
+var lastMilestone  = 0;
+var announcedStart = false;
 
 // ============================================================================
 // CHAT EVENT HANDLER
@@ -127,7 +113,7 @@ addEventListener("chatmsg", function (nick, msg) {
   // Silently ignore non-leaders beyond this point
   if (!isLeader) return;
 
-  // !login — leader only, works before logged in
+  // !login — works before logged in
   if (m === CB_CMD_LOGIN) {
     if (leaderLoggedIn) {
       say("** Already logged in. **");
@@ -163,7 +149,7 @@ addEventListener("chatmsg", function (nick, msg) {
     return;
   }
 
-  // "Next game is <gamename>" — only first word used, rest ignored
+  // "Next game is <gamename>" — first word only, rest ignored
   if (m.indexOf(CB_GameAnnouncePrefix) === 0) {
     var remainder = raw.substring(CB_GameAnnouncePrefix.length).trim();
 
@@ -198,116 +184,75 @@ addEventListener("chatmsg", function (nick, msg) {
 });
 
 // ============================================================================
-// LOCATION HANDLER — modeled after D2BotChannel, but never creates/joins games
+// LOCATION HANDLER — pulled from libs/oog/Locations via require, same as Lead
+// We override it to prevent any game creation/joining
 // ============================================================================
-function locationAction(location) {
-  switch (location) {
-    case sdk.game.locations.Lobby:
-      D2Bot.updateStatus("Lobby");
-      Controls.LobbyEnterChat.click();
-      break;
-
-    case sdk.game.locations.LobbyChat:
-      D2Bot.updateStatus("Channel: " + CB_Channel);
-
-      // Join our channel if needed
-      if (!announcedStart) {
-        ControlAction.joinChannel(CB_Channel);
-        delay(1000);
-        say(CB_StartupMessage);
-        announcedStart = true;
-      }
-      break;
-
-    // Screens we need to pass through to get online — let Starter handle them
-    case sdk.game.locations.MainMenu:
-    case sdk.game.locations.Login:
-    case sdk.game.locations.CharSelect:
-    case sdk.game.locations.SplashScreen:
-      Starter.LocationEvents.login();
-      break;
-
-    case sdk.game.locations.LoginError:
-    case sdk.game.locations.InvalidCdKey:
-    case sdk.game.locations.CdKeyInUse:
-      Starter.LocationEvents.loginError();
-      break;
-
-    case sdk.game.locations.LoginUnableToConnect:
-    case sdk.game.locations.TcpIpUnableToConnect:
-      Starter.LocationEvents.unableToConnect();
-      break;
-
-    case sdk.game.locations.RealmDown:
-      Starter.LocationEvents.realmDown();
-      break;
-
-    case sdk.game.locations.Disconnected:
-    case sdk.game.locations.LobbyLostConnection:
-      D2Bot.updateStatus("Disconnected");
-      announcedStart = false; // re-announce startup message on reconnect
-      delay(1000);
-      Controls.OkCentered.click();
-      break;
-
-    case sdk.game.locations.CharSelectPleaseWait:
-      !Starter.locationTimeout(Starter.Config.PleaseWaitTimeout * 1e3, location) && Controls.OkCentered.click();
-      break;
-
-    case sdk.game.locations.MainMenuConnecting:
-      !Starter.locationTimeout(Starter.Config.ConnectingTimeout * 1e3, location) && Controls.LoginCancelWait.click();
-      break;
-
-    case sdk.game.locations.LobbyPleaseWait:
-      !Starter.locationTimeout(Starter.Config.PleaseWaitTimeout * 1e3, location) && Controls.OkCentered.click();
-      break;
-
-    case sdk.game.locations.CharSelectConnecting:
-    case sdk.game.locations.CharSelectNoChars:
-      Starter.LocationEvents.charSelectError();
-      break;
-
-    case sdk.game.locations.GatewaySelect:
-      Controls.GatewayCancel.click();
-      break;
-
-    case sdk.game.locations.OtherMultiplayer:
-      Starter.LocationEvents.otherMultiplayerSelect();
-      break;
-
-    // Game creation/join screens — cancel out immediately, never proceed
-    case sdk.game.locations.CreateGame:
-    case sdk.game.locations.WaitingInLine:
-      Controls.CancelCreateGame.click();
-      break;
-
-    case sdk.game.locations.JoinGame:
-      Controls.CancelJoinGame.click();
-      break;
-
-    case sdk.game.locations.GameNameExists:
-    case sdk.game.locations.GameDoesNotExist:
-    case sdk.game.locations.GameIsFull:
-    case sdk.game.locations.ServerDown:
-    case sdk.game.locations.Ladder:
-    case sdk.game.locations.ChannelList:
-    case sdk.game.locations.SelectDifficultySP:
-      break;
-
-    default:
-      if (location !== undefined) {
-        D2Bot.printToConsole("ChannelBot: Unhandled location " + location, sdk.colors.D2Bot.Gray);
+const locationAction = (function () {
+  const { run } = require("./libs/oog/Locations");
+  return {
+    run: function (location) {
+      // Intercept game creation/join screens and cancel out immediately
+      if (
+        location === sdk.game.locations.CreateGame ||
+        location === sdk.game.locations.WaitingInLine
+      ) {
+        D2Bot.printToConsole("ChannelBot: Cancelling game creation screen.", sdk.colors.D2Bot.Gray);
+        // Click cancel on the create game dialog
+        var cancel = getControl(4, 637, 515, 168, 32);
+        if (cancel) cancel.click();
         delay(500);
+        return;
       }
-      break;
-  }
-}
+
+      if (location === sdk.game.locations.JoinGame) {
+        D2Bot.printToConsole("ChannelBot: Cancelling join game screen.", sdk.colors.D2Bot.Gray);
+        var cancel = getControl(4, 637, 515, 168, 32);
+        if (cancel) cancel.click();
+        delay(500);
+        return;
+      }
+
+      // For the lobby chat screen, handle channel joining ourselves
+      if (location === sdk.game.locations.LobbyChat) {
+        D2Bot.updateStatus("ChannelBot | " + CB_Channel + " | Runs: " + lastTotalRuns);
+        if (!announcedStart) {
+          delay(1000);
+          say("/join " + CB_Channel);
+          delay(1500);
+          say(CB_StartupMessage);
+          announcedStart = true;
+        }
+        return;
+      }
+
+      // All other screens (login, char select, disconnected, etc.) use default handler
+      run(location);
+    }
+  };
+})();
 
 // ============================================================================
-// MAIN
+// MAIN — mirrors D2BotLead.dbj structure exactly
 // ============================================================================
 function main() {
-  addEventListener("copydata", Starter.receiveCopyData);
+  debugLog(me.profile);
+
+  const Worker = require("./libs/modules/Worker");
+  Worker.runInBackground.copyData = (function () {
+    const workBench = [];
+    addEventListener("copydata", function (mode, msg) {
+      workBench.push({ mode: mode, msg: msg });
+    });
+    return function () {
+      if (!workBench.length) return true;
+      while (workBench.length) {
+        const { mode, msg } = workBench.shift();
+        Starter.receiveCopyData(mode, msg);
+      }
+      return true;
+    };
+  })();
+
   addEventListener("scriptmsg", Starter.scriptMsgEvent);
 
   while (!Starter.handle) {
@@ -315,8 +260,9 @@ function main() {
   }
 
   DataFile.updateStats("handle", Starter.handle);
+  delay(500);
   D2Bot.init();
-  load("tools/heartbeat.js");
+  load("threads/heartbeat.js");
 
   while (!Object.keys(Starter.gameInfo).length) {
     D2Bot.requestGameInfo();
@@ -337,12 +283,12 @@ function main() {
   // Main loop — never enters a game
   while (true) {
     while (me.ingame) {
-      // Should never happen, but if it does just wait it out
+      // Should never happen — just wait it out if it does
       delay(1000);
     }
 
-    locationAction(getLocation());
-    D2Bot.updateStatus("ChannelBot | " + CB_Channel + " | Runs: " + lastTotalRuns);
+    Starter.isUp = "no";
+    locationAction.run(getLocation());
     delay(1000);
   }
 }
