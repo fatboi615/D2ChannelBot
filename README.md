@@ -20,7 +20,7 @@
 |---------|--------|-------------|
 | `!runs` | Public | Display total runs completed |
 | `!game` | Public | Show current/last game name |
-| `!help` | Public | List available commands |
+| `!help` | Public | List available commands | (WIP)
 | `!login` | Leader | Authenticate as the run tracker leader |
 | `!logout` | Leader | End leader session |
 | `!reset` | Leader | Reset all run statistics |
@@ -31,7 +31,7 @@ Edit the config section at the top of `ChannelBot.dbj`:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CB_Channel` | Target channel name | `OP CHAOSBAAL` |
+| `CB_Channel` | Target channel name | `CHANNEL NAME` |
 | `CB_LeaderAccount` | Leader account (format: `charname*accountname`) | - |
 | `CB_MilestoneEvery` | Announce milestone every N runs | `3` |
 | `CB_GameListInterval` | Game list announce interval (ms) | `3 minutes` |
