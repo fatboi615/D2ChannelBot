@@ -14,10 +14,10 @@ includeSystemLibs();
 // CONFIG
 // ============================================================================
 var CB_Channel            = "OP CHAOSBAAL";
-var CB_LeaderAccount      = "CoopPoop*CooperCBRunz"; // charname*accountname
+var CB_LeaderAccount      = "name*account"; // charname*accountname
 var CB_DataFilePath       = "data/ChannelBotStats.json";
 var CB_AnnounceMilestone  = true;
-var CB_MilestoneEvery     = 3;
+var CB_MilestoneEvery     = 10;
 var CB_GameAnnounceFormat = "** Next Game: {game} | Run #{runs} **";
 var CB_MilestoneFormat    = "** {runs} total runs completed! **";
 var CB_StartupMessage     = "** Run tracker online. Leader must !login to begin. **";
