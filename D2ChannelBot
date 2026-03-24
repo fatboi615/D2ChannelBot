@@ -23,6 +23,10 @@ var CB_MilestoneFormat    = "** {runs} total runs completed! **";
 var CB_StartupMessage     = "** Run tracker online. Leader must !login to begin. **";
 var CB_LogoutSuccess      = "** Leader logged out. Tracking paused. **";
 var CB_GameAnnouncePrefix = "Next game is"; // case-insensitive
+var CB_AnnounceGameList   = true;
+var CB_GameListInterval   = 3 * 60 * 1000; // 3 minutes in milliseconds
+var CB_GameListFormat     = "** Recent games: {games} **";
+var CB_MaxGamesInList     = 5;
 
 // Commands
 var CB_CMD_LOGIN  = "!login";
