@@ -13,8 +13,8 @@ includeSystemLibs();
 // ============================================================================
 // CONFIG — edit these to match your setup
 // ============================================================================
-var CB_Channel            = "CHANGEME"; // B.net channel to sit in
-var CB_LeaderAccount      = "CHANGEME"; // leader's B.net account name
+var CB_Channel            = "channelname"; // B.net channel to sit in
+var CB_LeaderAccount      = "change*me"; //  charname*accountname
 var CB_DataFilePath       = "data/ChannelBotStats.json";
 var CB_AnnounceMilestone  = true;
 var CB_MilestoneEvery     = 3;
@@ -22,7 +22,7 @@ var CB_GameAnnounceFormat = "** Next Game: {game} | Run #{runs} **";
 var CB_MilestoneFormat    = "** {runs} total runs completed! **";
 var CB_StartupMessage     = "** Run tracker online. Leader must !login to begin. **";
 var CB_LogoutSuccess      = "** Leader logged out. Tracking paused. **";
-var CB_GameAnnouncePrefix = "next game is"; // case-insensitive
+var CB_GameAnnouncePrefix = "Next game is"; // case-insensitive
 
 // Commands
 var CB_CMD_LOGIN  = "!login";
