@@ -1,5 +1,4 @@
 # D2ChannelBot
-<img width="400" alt="Banner" src="https://github.com/user-attachments/assets/ee532630-a554-4a48-9e10-7440a777779d">
 
 > A clean and simple Diablo 2 channel bot that tracks Chaos Sanctuary and Baal runs.  
 > Built for **d2bs / Kolbot**.
