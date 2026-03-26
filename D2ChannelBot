@@ -1,44 +1,46 @@
 /**
  *  @filename    ChannelBot.dbj
- *  @author      based on kolton/theBGuy structure
- *  @desc        Channel-sitting run tracker bot. Stays in channel at all times,
- *               never creates or joins games. Tracks runs announced by leader.
- *
- *  @typedef {import("./sdk/globals")}
+ *  @author      based on kolton/theBGuy - multi-leader version (no login required)
+ *  @desc        Channel-sitting run tracker bot. Any authorized leader can announce runs instantly.
  */
 
-include("critical.js"); // required
+include("critical.js");
 includeSystemLibs();
 
 // ============================================================================
 // CONFIG
 // ============================================================================
 var CB_Channel            = "OP CHAOSBAAL";
-var CB_LeaderAccount      = "name*account"; // charname*accountname
+
+var CB_Leaders            = [
+    "YourMainChar*YourAccount",     
+    "YourMainChar*YourAccount",
+    "YourMainChar*YourAccount"   // ← Edit with your real leaders
+];
+
 var CB_DataFilePath       = "data/ChannelBotStats.json";
 var CB_AnnounceMilestone  = true;
-var CB_MilestoneEvery     = 10;
+var CB_MilestoneEvery     = 50;
 var CB_GameAnnounceFormat = "** Next Game: {game} | Run #{runs} **";
 var CB_MilestoneFormat    = "** {runs} total runs completed! **";
-var CB_StartupMessage     = "** Run tracker online. Leader must !login to begin. **";
-var CB_LogoutSuccess      = "** Leader logged out. Tracking paused. **";
+var CB_StartupMessage     = "** Run tracker online. Authorized leaders can announce games anytime. **";
 var CB_GameAnnouncePrefix = "next game is"; // must be lowercase
 
-// Periodic game list announce — posts recent games to channel every X ms
+// Periodic recent games announce
 var CB_AnnounceGameList  = true;
 var CB_GameListInterval  = 3 * 60 * 1000; // every 3 minutes
 var CB_MaxGamesInList    = 5;
 
 // Commands
-var CB_CMD_LOGIN  = "!login";
-var CB_CMD_LOGOUT = "!logout";
-var CB_CMD_RUNS   = "!runs";
-var CB_CMD_GAME   = "!game";
-var CB_CMD_RESET  = "!reset";
-var CB_CMD_HELP   = "!help";
+var CB_CMD_RUNS    = "!runs";
+var CB_CMD_GAME    = "!game";
+var CB_CMD_STATUS  = "!status";
+var CB_CMD_LEADERS = "!leaders";
+var CB_CMD_RESET   = "!reset";
+var CB_CMD_HELP    = "!help";
 
 // ============================================================================
-// Tell Starter not to create or join games
+// Starter config - prevent creating/joining games
 // ============================================================================
 Starter.Config.AnnounceGames = false;
 Starter.Config.Games         = [];
@@ -54,7 +56,7 @@ if (DataFile.init()) {
 }
 
 // ============================================================================
-// DATA HELPERS
+// HELPERS
 // ============================================================================
 function cbDefaultData() {
   return { totalRuns: 0, lastGame: { name: "", time: 0 }, recentGames: [] };
@@ -66,7 +68,6 @@ function cbReadData() {
       var raw = FileTools.readText(CB_DataFilePath);
       if (raw && raw.length > 0) {
         var parsed = JSON.parse(raw);
-        // ensure recentGames exists on older data files
         if (!parsed.recentGames) parsed.recentGames = [];
         return parsed;
       }
@@ -100,23 +101,36 @@ function cbFormat(template, values) {
   });
 }
 
+function isAuthorizedLeader(nick) {
+  if (!nick || !CB_Leaders || CB_Leaders.length === 0) return false;
+  var lowerNick = nick.toLowerCase().trim();
+  for (var i = 0; i < CB_Leaders.length; i++) {
+    var leaderLower = CB_Leaders[i].toLowerCase().trim();
+    if (leaderLower === lowerNick || leaderLower.split("*")[0] === lowerNick) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ============================================================================
 // SESSION STATE
 // ============================================================================
-var leaderLoggedIn  = false;
-var lastTotalRuns   = -1;
-var lastMilestone   = 0;
+var lastTotalRuns    = -1;
+var lastMilestone    = 0;
 var lastGameListTick = 0;
 
 // ============================================================================
 // CHAT EVENT HANDLER
 // ============================================================================
 addEventListener("chatmsg", function (nick, msg) {
-  var isLeader = nick.toLowerCase() === CB_LeaderAccount.toLowerCase();
+  var isLeader = isAuthorizedLeader(nick);
   var raw = msg.trim();
   var m   = raw.toLowerCase();
 
-  // PUBLIC commands — anyone
+  // ========================
+  // PUBLIC COMMANDS
+  // ========================
   if (m === CB_CMD_RUNS) {
     var d = cbReadData();
     say("Total runs completed: " + (d ? d.totalRuns : 0));
@@ -133,55 +147,42 @@ addEventListener("chatmsg", function (nick, msg) {
     return;
   }
 
-  // Silently ignore non-leaders beyond this point
-  if (!isLeader) return;
-
-  // !login — works before logged in
-  if (m === CB_CMD_LOGIN) {
-    if (leaderLoggedIn) {
-      say("** Already logged in, " + nick + ". **");
-    } else {
-      leaderLoggedIn = true;
-      D2Bot.printToConsole("ChannelBot: Leader logged in: " + nick, sdk.colors.D2Bot.Gray);
-      var ld    = cbReadData();
-      var lRuns = ld ? ld.totalRuns : 0;
-      var lNext = (Math.floor(lRuns / CB_MilestoneEvery) + 1) * CB_MilestoneEvery;
-      var lToGo = lNext - lRuns;
-      say("** Welcome, " + nick + "! Runs completed: " + lRuns + " | Next milestone: run " + lNext + " (" + lToGo + " to go) **");
-    }
-    return;
-  }
-
-  // All remaining commands require active session
-  if (!leaderLoggedIn) return;
-
-  if (m === CB_CMD_LOGOUT) {
-    leaderLoggedIn = false;
-    D2Bot.printToConsole("ChannelBot: Leader logged out: " + nick, sdk.colors.D2Bot.Gray);
-    say(CB_LogoutSuccess);
+  if (m === CB_CMD_STATUS) {
+    var d = cbReadData();
+    say("** Total runs: " + (d ? d.totalRuns : 0) + " **");
     return;
   }
 
   if (m === CB_CMD_HELP) {
-    say("Public: " + CB_CMD_RUNS + " | " + CB_CMD_GAME +
-        "  ||  Leader: " + CB_CMD_RESET + " | " + CB_CMD_LOGOUT);
+    say("=== ChannelBot Commands ===");
+    say("Public:  !runs | !game | !status | !help");
+    say("Leader:  !reset | !leaders");
     return;
   }
 
+  // ========================
+  // LEADER ONLY COMMANDS
+  // ========================
+  if (!isLeader) return;
+
   if (m === CB_CMD_RESET) {
     cbWriteData(cbDefaultData());
-    lastTotalRuns  = 0;
-    lastMilestone  = 0;
+    lastTotalRuns = 0;
+    lastMilestone = 0;
     say("** Run stats have been reset. **");
     return;
   }
 
-  // "Next game is <gamename>" — first word only, rest ignored
+  if (m === CB_CMD_LEADERS) {
+    say("** Authorized Leaders: " + CB_Leaders.join(" | ") + " **");
+    return;
+  }
+
+  // Game announcement: "next game is <gamename>"
   if (m.indexOf(CB_GameAnnouncePrefix) === 0) {
     var remainder = raw.substring(CB_GameAnnouncePrefix.length).trim();
-
     if (!remainder) {
-      say("** Couldn't parse game name. Format: Next game is <gamename> **");
+      say("** Format: next game is <gamename> **");
       return;
     }
 
@@ -189,8 +190,7 @@ addEventListener("chatmsg", function (nick, msg) {
 
     var data = cbUpdateData(function (d) {
       d.totalRuns += 1;
-      d.lastGame   = { name: gameName, time: getTickCount() };
-      // keep a rolling list of recent games
+      d.lastGame = { name: gameName, time: getTickCount() };
       d.recentGames.unshift(gameName);
       if (d.recentGames.length > CB_MaxGamesInList) {
         d.recentGames = d.recentGames.slice(0, CB_MaxGamesInList);
@@ -199,7 +199,6 @@ addEventListener("chatmsg", function (nick, msg) {
 
     var runs = data ? data.totalRuns : "?";
     say(cbFormat(CB_GameAnnounceFormat, { game: gameName, runs: runs }));
-    D2Bot.printToConsole("ChannelBot: Game announced: " + gameName + " run #" + runs, sdk.colors.D2Bot.Gray);
 
     // Milestone check
     if (CB_AnnounceMilestone) {
@@ -211,50 +210,43 @@ addEventListener("chatmsg", function (nick, msg) {
     }
 
     lastTotalRuns = runs;
+    D2Bot.printToConsole("ChannelBot: Game announced: " + gameName + " run #" + runs, sdk.colors.D2Bot.Gray);
     return;
   }
 });
 
 // ============================================================================
-// PERIODIC GAME LIST ANNOUNCE
-// Call this from the main sit loop every tick
+// PERIODIC RECENT GAMES ANNOUNCE (now always active)
 // ============================================================================
 function cbCheckGameListAnnounce() {
-  if (!CB_AnnounceGameList || !leaderLoggedIn) return;
+  if (!CB_AnnounceGameList) return;
   if (getTickCount() - lastGameListTick < CB_GameListInterval) return;
 
   var d = cbReadData();
   if (d && d.recentGames && d.recentGames.length > 0) {
-    say("** Recent games: " + d.recentGames.join(", ") + " | Total runs: " + d.totalRuns + " **");
+    say("** Recent games: " + d.recentGames.join(", ") + " | Total: " + d.totalRuns + " **");
   }
   lastGameListTick = getTickCount();
 }
 
 // ============================================================================
-// HELPER: join a channel using the Channel button + text box in lobby chat
+// CHANNEL JOIN HELPER
 // ============================================================================
 function cbJoinChannel(channelName) {
   D2Bot.printToConsole("ChannelBot: Joining channel: " + channelName, sdk.colors.D2Bot.Gray);
 
-  // Control.LobbyChannel = Button, 535, 490, 80, 20
   var channelBtn = getControl(sdk.controls.Button, 535, 490, 80, 20);
-  if (!channelBtn) {
-    D2Bot.printToConsole("ChannelBot: Could not find Channel button.", sdk.colors.D2Bot.Gray);
-    return false;
+  if (channelBtn) {
+    channelBtn.click();
+    delay(1000);
   }
-  channelBtn.click();
-  delay(1000);
 
-  // Control.LobbyChannelText = TextBox, 432, 162, 155, 20
   ControlAction.setText(sdk.controls.TextBox, 432, 162, 155, 20, channelName);
   delay(500);
 
-  // Control.LobbyChannelOk = Button, 671, 433, 96, 32
   var okBtn = getControl(sdk.controls.Button, 671, 433, 96, 32);
   if (okBtn) okBtn.click();
   delay(1500);
-
-  return true;
 }
 
 // ============================================================================
@@ -265,12 +257,9 @@ const locationAction = (function () {
   return {
     run: function (location) {
       switch (location) {
-
         case sdk.game.locations.Lobby:
           D2Bot.updateStatus("Lobby - clicking Enter Chat");
-          D2Bot.printToConsole("ChannelBot: Lobby screen, clicking Enter Chat.", sdk.colors.D2Bot.Gray);
           delay(1000);
-          // Control.LobbyEnterChat = Button, 27, 480, 120, 20
           var enterChat = getControl(sdk.controls.Button, 27, 480, 120, 20);
           if (enterChat) enterChat.click();
           delay(1000);
@@ -281,9 +270,8 @@ const locationAction = (function () {
           cbJoinChannel(CB_Channel);
           delay(1000);
           say(CB_StartupMessage);
-          lastGameListTick = getTickCount(); // reset timer so it doesn't fire immediately
+          lastGameListTick = getTickCount();
 
-          // Sit here — periodic announce runs in this loop
           while (getLocation() === sdk.game.locations.LobbyChat) {
             D2Bot.updateStatus("ChannelBot | " + CB_Channel + " | Runs: " + lastTotalRuns);
             cbCheckGameListAnnounce();
@@ -293,18 +281,9 @@ const locationAction = (function () {
 
         case sdk.game.locations.CreateGame:
         case sdk.game.locations.WaitingInLine:
-          D2Bot.printToConsole("ChannelBot: Cancelling game creation.", sdk.colors.D2Bot.Gray);
-          delay(500);
-          // Control.CancelCreateGame = Button, 433, 433, 96, 32
-          var cancelBtn = getControl(sdk.controls.Button, 433, 433, 96, 32);
-          if (cancelBtn) cancelBtn.click();
-          delay(500);
-          break;
-
         case sdk.game.locations.JoinGame:
-          D2Bot.printToConsole("ChannelBot: Cancelling join game.", sdk.colors.D2Bot.Gray);
+          D2Bot.printToConsole("ChannelBot: Cancelling game action.", sdk.colors.D2Bot.Gray);
           delay(500);
-          // Control.CancelJoinGame = Button, 433, 433, 96, 32
           var cancelBtn = getControl(sdk.controls.Button, 433, 433, 96, 32);
           if (cancelBtn) cancelBtn.click();
           delay(500);
@@ -333,8 +312,8 @@ function main() {
     return function () {
       if (!workBench.length) return true;
       while (workBench.length) {
-        const { mode, msg } = workBench.shift();
-        Starter.receiveCopyData(mode, msg);
+        const item = workBench.shift();
+        Starter.receiveCopyData(item.mode, item.msg);
       }
       return true;
     };
@@ -342,9 +321,7 @@ function main() {
 
   addEventListener("scriptmsg", Starter.scriptMsgEvent);
 
-  while (!Starter.handle) {
-    delay(100);
-  }
+  while (!Starter.handle) delay(100);
 
   DataFile.updateStats("handle", Starter.handle);
   delay(500);
@@ -361,16 +338,14 @@ function main() {
     delay(500);
   }
 
-  var initData  = cbReadData();
+  var initData = cbReadData();
   lastTotalRuns = initData.totalRuns;
   lastMilestone = Math.floor(initData.totalRuns / CB_MilestoneEvery) * CB_MilestoneEvery;
-  D2Bot.printToConsole("ChannelBot: Initialized. Runs on record: " + lastTotalRuns, sdk.colors.D2Bot.Gray);
+
+  D2Bot.printToConsole("ChannelBot initialized. Runs: " + lastTotalRuns + " | Leaders: " + CB_Leaders.length, sdk.colors.D2Bot.Gray);
 
   while (true) {
-    while (me.ingame) {
-      delay(1000);
-    }
-
+    while (me.ingame) delay(1000);
     Starter.isUp = "no";
     locationAction.run(getLocation());
     delay(1000);
