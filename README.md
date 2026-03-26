@@ -1,15 +1,16 @@
 # D2ChannelBot
 <img width="400" alt="Banner" src="https://github.com/user-attachments/assets/ee532630-a554-4a48-9e10-7440a777779d">
-> A Diablo 2 channel bot that tracks Chaos and Baal runs. Built for use with **d2bs/kolbot**.
+> A clean and simple Diablo 2 channel bot that tracks Chaos Sanctuary and Baal runs.  
+> Built for **d2bs / Kolbot**.
 
 ## Features
-- **Automatic Channel Join** — Joins your specified channel on startup and stays there
-- **Multi-Leader Support** — Any authorized leader can announce runs instantly (no `!login` required)
+- **Automatic Channel Join** — Joins your chosen channel on startup and stays there
+- **Multi-Leader Support** — Any authorized leader can announce runs instantly (no `!login` needed)
 - **Run Tracking** — Counts total runs with persistent JSON storage
-- **Game Announcements** — Automatically posts the next game name to the channel
-- **Milestones** — Announces big milestones at configurable intervals
-- **Periodic Updates** — Posts a list of recent games on a schedule
-- **Data Persistence** — All stats are saved to `data/ChannelBotStats.json`
+- **Game Announcements** — Posts the next game name to the channel
+- **Milestones** — Announces every X runs (configurable)
+- **Periodic Updates** — Automatically posts recent games list
+- **Data Persistence** — Saves everything to `data/ChannelBotStats.json`
 
 ## Commands
 
@@ -22,9 +23,16 @@
 | `!leaders`    | Leader     | Show the list of authorized leaders              |
 | `!reset`      | Leader     | Reset all run statistics (clears JSON file)      |
 
-**Game Announcement Format:**  
-Leaders simply type:  
+**How to announce a game:**  
+Leaders just type:  
 `next game is GameName123`
+
+## Installation
+1. Copy `ChannelBot.dbj` into your Kolbot folder:  
+   `d2bs/kolbot/bots/`
+2. Add the bot in **D2Bot#** as a normal profile
+3. Set the script to **`ChannelBot.dbj`**
+4. Edit the config at the top of the file (leaders + channel)
 
 ## Configuration
 Edit the config section at the top of **`ChannelBot.dbj`**:
@@ -34,34 +42,43 @@ Edit the config section at the top of **`ChannelBot.dbj`**:
 | `CB_Channel`              | Target channel name                              | `"OP CHAOSBAAL"`                      |
 | `CB_Leaders`              | Array of authorized leaders                      | `["charname*account", "MyMain*Acc"]` |
 | `CB_MilestoneEvery`       | Announce milestone every N runs                  | `10`                                  |
-| `CB_GameListInterval`     | How often to post recent games (ms)              | `3 * 60 * 1000` (3 minutes)           |
+| `CB_GameListInterval`     | Recent games announce interval (ms)              | `3 * 60 * 1000` (3 minutes)           |
 | `CB_MaxGamesInList`       | How many recent games to show                    | `5`                                   |
 | `CB_AnnounceMilestone`    | Enable/disable milestone messages                | `true`                                |
 
-> **Tip:** You can use just the character name or full `char*account` format in the leaders list.
+> **Tip:** You can use just the character name **or** full `char*account` in the leaders list.
 
-## Requirements
-- [d2bs](https://github.com/d2bs/d2bs)
-- [kolbot](https://github.com/blizzhackers/kolbot)
+### Example Config Snippet
+```js
+var CB_Channel = "OP CHAOSBAAL";
 
-## Status
-**Fully updated and improved** — March 2026
+var CB_Leaders = [
+    "YourLeader1*Account1",
+    "YourLeader2*Account2",
+    "MyMainChar"                    // just char name also works
+];
+Requirements
 
-### Current Features ✓
-- [x] Multi-leader support (no `!login` / `!logout` needed)
-- [x] Instant game announcements by any authorized leader
-- [x] All commands working (`!help`, `!status`, `!leaders`, `!reset`, etc.)
-- [x] Channel joining & staying in lobby chat
-- [x] Data persistence (JSON)
-- [x] Milestone announcements
-- [x] Periodic recent games list
-- [x] Clean prevention of game creation/joining
+d2bs
+Kolbot
 
-**No more login step** — trusted leaders can announce runs immediately.
+Status
+Fully updated and improved — March 2026
+Current Features ✓
 
-## License
+ Multi-leader support (no !login / !logout required)
+ Instant game announcements by any authorized leader
+ All commands working (!help, !status, !leaders, !reset, etc.)
+ Reliable channel joining
+ Data persistence (JSON)
+ Milestone + periodic announcements
+ Safe (never creates or joins games)
+
+Changelog
+
+2026-03-26 — Major update: Removed !login system, added full multi-leader support, added !status and !leaders, improved !help, cleaned up code and README
+
+License
 MIT
 
----
-
-**Made with ❤️ for the Diablo 2 community**
+Made with ❤️ for the Diablo 2 community
