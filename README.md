@@ -71,6 +71,7 @@ var CB_LeaderDataFile    = "data/" + CB_LeaderProfileName + ".json";
 - Kolbot
 
 ## Status
+<img width="372" height="330" alt="image" src="https://github.com/user-attachments/assets/8d3b753d-3b14-454c-818d-6db994e92082" />
 
 Fully updated and improved — March 2026
 
