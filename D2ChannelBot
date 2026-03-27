@@ -13,10 +13,12 @@ includeSystemLibs();
 var CB_Channel            = "OP CHAOSBAAL";
 
 var CB_Leaders            = [
-    "YourMainChar*YourAccount",     
-    "YourMainChar*YourAccount",
-    "YourMainChar*YourAccount"   // ← Edit with your real leaders
+  "CoopPoop*CooperCBRunz",
+  // "AnotherChar*AnotherAccount",
 ];
+
+var CB_LeaderProfileName  = "CBRUNZ";
+var CB_LeaderDataFile     = "data/" + CB_LeaderProfileName + ".json";
 
 var CB_DataFilePath       = "data/ChannelBotStats.json";
 var CB_AnnounceMilestone  = true;
@@ -28,19 +30,18 @@ var CB_GameAnnouncePrefix = "next game is"; // must be lowercase
 
 // Periodic recent games announce
 var CB_AnnounceGameList  = true;
-var CB_GameListInterval  = 3 * 60 * 1000; // every 3 minutes
+var CB_GameListInterval  = 3 * 60 * 1000;
 var CB_MaxGamesInList    = 5;
 
 // Commands
 var CB_CMD_RUNS    = "!runs";
 var CB_CMD_GAME    = "!game";
-var CB_CMD_STATUS  = "!status";
-var CB_CMD_LEADERS = "!leaders";
+var CB_CMD_STATS   = "!stats";
 var CB_CMD_RESET   = "!reset";
 var CB_CMD_HELP    = "!help";
 
 // ============================================================================
-// Starter config - prevent creating/joining games
+// Starter config
 // ============================================================================
 Starter.Config.AnnounceGames = false;
 Starter.Config.Games         = [];
@@ -56,10 +57,18 @@ if (DataFile.init()) {
 }
 
 // ============================================================================
-// HELPERS
+// DATA HELPERS
 // ============================================================================
 function cbDefaultData() {
-  return { totalRuns: 0, lastGame: { name: "", time: 0 }, recentGames: [] };
+  return {
+    totalRuns:     0,
+    lastGame:      { name: "", time: 0 },
+    recentGames:   [],
+    bestStreak:    0,
+    currentStreak: 0,
+    runTimes:      [],
+    firstRunTime:  0,
+  };
 }
 
 function cbReadData() {
@@ -68,7 +77,12 @@ function cbReadData() {
       var raw = FileTools.readText(CB_DataFilePath);
       if (raw && raw.length > 0) {
         var parsed = JSON.parse(raw);
-        if (!parsed.recentGames) parsed.recentGames = [];
+        var def = cbDefaultData();
+        for (var key in def) {
+          if (def.hasOwnProperty(key) && !parsed.hasOwnProperty(key)) {
+            parsed[key] = def[key];
+          }
+        }
         return parsed;
       }
     }
@@ -101,12 +115,41 @@ function cbFormat(template, values) {
   });
 }
 
-function isAuthorizedLeader(nick) {
-  if (!nick || !CB_Leaders || CB_Leaders.length === 0) return false;
-  var lowerNick = nick.toLowerCase().trim();
+// ============================================================================
+// READ LEADER PROFILE RUN COUNT
+// ============================================================================
+function cbGetLeaderRuns() {
+  try {
+    if (FileTools.exists(CB_LeaderDataFile)) {
+      var raw = FileTools.readText(CB_LeaderDataFile);
+      if (raw && raw.length > 0) {
+        var parsed = JSON.parse(raw);
+        if (typeof parsed.runs !== "undefined") {
+          return parseInt(parsed.runs, 10) || 0;
+        }
+      }
+    }
+  } catch (e) {
+    D2Bot.printToConsole("ChannelBot: could not read leader profile - " + e, sdk.colors.D2Bot.Gray);
+  }
+  return -1;
+}
+
+// ============================================================================
+// LEADER CHECK
+// Checks nick against full "char*account", just charname, or just accountname
+// Also logs the nick to console so we can verify the format
+// ============================================================================
+function cbIsLeader(nick) {
+  if (!nick) return false;
+  var n = nick.toLowerCase().trim();
+  D2Bot.printToConsole("ChannelBot: chatmsg from: [" + n + "]", sdk.colors.D2Bot.Gray);
   for (var i = 0; i < CB_Leaders.length; i++) {
-    var leaderLower = CB_Leaders[i].toLowerCase().trim();
-    if (leaderLower === lowerNick || leaderLower.split("*")[0] === lowerNick) {
+    var entry  = CB_Leaders[i].toLowerCase().trim();
+    var parts  = entry.split("*");
+    var cname  = parts[0] || "";
+    var aname  = parts[1] || "";
+    if (n === entry || n === cname || n === aname) {
       return true;
     }
   }
@@ -119,112 +162,157 @@ function isAuthorizedLeader(nick) {
 var lastTotalRuns    = -1;
 var lastMilestone    = 0;
 var lastGameListTick = 0;
+var lastRunTick      = 0;
+var sessionRunCount  = 0;
+var sessionStartTick = getTickCount();
 
 // ============================================================================
 // CHAT EVENT HANDLER
 // ============================================================================
 addEventListener("chatmsg", function (nick, msg) {
-  var isLeader = isAuthorizedLeader(nick);
+  var isLeader = cbIsLeader(nick);
   var raw = msg.trim();
   var m   = raw.toLowerCase();
 
-  // ========================
-  // PUBLIC COMMANDS
-  // ========================
+  // -----------------------------------------------------------------------
+  // PUBLIC commands — anyone
+  // -----------------------------------------------------------------------
   if (m === CB_CMD_RUNS) {
-    var d = cbReadData();
-    say("Total runs completed: " + (d ? d.totalRuns : 0));
+    var leaderRuns = cbGetLeaderRuns();
+    var d          = cbReadData();
+    var profileStr = leaderRuns >= 0 ? " | " + CB_LeaderProfileName + " profile runs: " + leaderRuns : "";
+    say("** Tracked runs: " + (d ? d.totalRuns : 0) + profileStr + " **");
     return;
   }
 
   if (m === CB_CMD_GAME) {
     var d = cbReadData();
     if (d && d.lastGame && d.lastGame.name) {
-      say("Last game: " + d.lastGame.name + " | Total runs: " + d.totalRuns);
+      say("** Last game: " + d.lastGame.name + " | Total runs: " + d.totalRuns + " **");
     } else {
-      say("No game info recorded yet.");
+      say("** No game info recorded yet. **");
     }
     return;
   }
 
-  if (m === CB_CMD_STATUS) {
-    var d = cbReadData();
-    say("** Total runs: " + (d ? d.totalRuns : 0) + " **");
+  if (m === CB_CMD_STATS) {
+    var d          = cbReadData();
+    var leaderRuns = cbGetLeaderRuns();
+    if (!d || d.totalRuns === 0) {
+      say("** No stats recorded yet. **");
+      return;
+    }
+    var avgStr = "N/A";
+    if (d.runTimes && d.runTimes.length > 0) {
+      var total = 0;
+      for (var i = 0; i < d.runTimes.length; i++) total += d.runTimes[i];
+      var avgMs  = Math.floor(total / d.runTimes.length);
+      var avgMin = Math.floor(avgMs / 60000);
+      var avgSec = Math.floor((avgMs % 60000) / 1000);
+      avgStr = avgMin + "m " + avgSec + "s";
+    }
+    var nextMs     = (Math.floor(d.totalRuns / CB_MilestoneEvery) + 1) * CB_MilestoneEvery;
+    var toGo       = nextMs - d.totalRuns;
+    var sessElapsed = Math.floor((getTickCount() - sessionStartTick) / 60000);
+    var profileStr = leaderRuns >= 0 ? " | " + CB_LeaderProfileName + " total: " + leaderRuns : "";
+    say("** Stats: Tracked runs: " + d.totalRuns
+      + profileStr
+      + " | Best streak: " + (d.bestStreak || 0)
+      + " | Avg run time: " + avgStr
+      + " | Next milestone: " + nextMs + " (" + toGo + " to go)"
+      + " | Session: " + sessionRunCount + " runs in " + sessElapsed + " min **");
     return;
   }
 
   if (m === CB_CMD_HELP) {
-    say("=== ChannelBot Commands ===");
-    say("Public:  !runs | !game | !status | !help");
-    say("Leader:  !reset | !leaders");
+    say("** Commands: "
+      + CB_CMD_RUNS + " | "
+      + CB_CMD_GAME + " | "
+      + CB_CMD_STATS
+      + " || Leaders only: "
+      + CB_CMD_RESET
+      + " **");
     return;
   }
 
-  // ========================
-  // LEADER ONLY COMMANDS
-  // ========================
+  // -----------------------------------------------------------------------
+  // Beyond here: silently ignore non-leaders
+  // -----------------------------------------------------------------------
   if (!isLeader) return;
 
   if (m === CB_CMD_RESET) {
     cbWriteData(cbDefaultData());
-    lastTotalRuns = 0;
-    lastMilestone = 0;
+    lastTotalRuns   = 0;
+    lastMilestone   = 0;
+    sessionRunCount = 0;
     say("** Run stats have been reset. **");
     return;
   }
 
-  if (m === CB_CMD_LEADERS) {
-    say("** Authorized Leaders: " + CB_Leaders.join(" | ") + " **");
-    return;
-  }
-
-  // Game announcement: "next game is <gamename>"
+  // "Next game is <gamename>"
   if (m.indexOf(CB_GameAnnouncePrefix) === 0) {
     var remainder = raw.substring(CB_GameAnnouncePrefix.length).trim();
     if (!remainder) {
-      say("** Format: next game is <gamename> **");
+      say("** Format: Next game is <gamename> **");
       return;
     }
 
-    var gameName = remainder.split(/\s+/)[0];
+    var gameName  = remainder.split(/\s+/)[0];
+    var nowTick   = getTickCount();
+    var runTimeMs = (lastRunTick > 0) ? (nowTick - lastRunTick) : 0;
+    lastRunTick   = nowTick;
+    sessionRunCount += 1;
 
     var data = cbUpdateData(function (d) {
       d.totalRuns += 1;
-      d.lastGame = { name: gameName, time: getTickCount() };
+      d.lastGame   = { name: gameName, time: nowTick };
       d.recentGames.unshift(gameName);
       if (d.recentGames.length > CB_MaxGamesInList) {
         d.recentGames = d.recentGames.slice(0, CB_MaxGamesInList);
       }
+      if (runTimeMs > 0 && runTimeMs < 30 * 60 * 1000) {
+        d.runTimes.push(runTimeMs);
+        if (d.runTimes.length > 100) d.runTimes = d.runTimes.slice(-100);
+      }
+      d.currentStreak = (d.currentStreak || 0) + 1;
+      if (d.currentStreak > (d.bestStreak || 0)) d.bestStreak = d.currentStreak;
+      if (d.firstRunTime === 0) d.firstRunTime = nowTick;
     });
 
-    var runs = data ? data.totalRuns : "?";
-    say(cbFormat(CB_GameAnnounceFormat, { game: gameName, runs: runs }));
+    // Use leader profile run count for display if available
+    var leaderRuns  = cbGetLeaderRuns();
+    var displayRuns = leaderRuns >= 0 ? leaderRuns : (data ? data.totalRuns : "?");
 
-    // Milestone check
+    say(cbFormat(CB_GameAnnounceFormat, { game: gameName, runs: displayRuns }));
+    D2Bot.printToConsole("ChannelBot: Game announced: " + gameName + " run #" + displayRuns, sdk.colors.D2Bot.Gray);
+
     if (CB_AnnounceMilestone) {
-      var nextMilestone = (Math.floor((runs - 1) / CB_MilestoneEvery) + 1) * CB_MilestoneEvery;
-      if (runs === nextMilestone && nextMilestone > lastMilestone) {
-        say(cbFormat(CB_MilestoneFormat, { runs: runs }));
+      var trackedRuns   = data ? data.totalRuns : 0;
+      var nextMilestone = (Math.floor((trackedRuns - 1) / CB_MilestoneEvery) + 1) * CB_MilestoneEvery;
+      if (trackedRuns === nextMilestone && nextMilestone > lastMilestone) {
+        say(cbFormat(CB_MilestoneFormat, { runs: trackedRuns }));
         lastMilestone = nextMilestone;
       }
     }
 
-    lastTotalRuns = runs;
-    D2Bot.printToConsole("ChannelBot: Game announced: " + gameName + " run #" + runs, sdk.colors.D2Bot.Gray);
+    lastTotalRuns = data ? data.totalRuns : lastTotalRuns;
     return;
   }
 });
 
 // ============================================================================
-// PERIODIC RECENT GAMES ANNOUNCE (now always active)
+// PERIODIC GAME LIST ANNOUNCE
 // ============================================================================
 function cbCheckGameListAnnounce() {
   if (!CB_AnnounceGameList) return;
   if (getTickCount() - lastGameListTick < CB_GameListInterval) return;
 
-  var d = cbReadData();
+  var d          = cbReadData();
+  var leaderRuns = cbGetLeaderRuns();
+  var runsStr    = leaderRuns >= 0 ? leaderRuns : (d ? d.totalRuns : 0);
+
   if (d && d.recentGames && d.recentGames.length > 0) {
-    say("** Recent games: " + d.recentGames.join(", ") + " | Total: " + d.totalRuns + " **");
+    say("** Recent games: " + d.recentGames.join(", ") + " | Total runs: " + runsStr + " **");
   }
   lastGameListTick = getTickCount();
 }
@@ -234,16 +322,13 @@ function cbCheckGameListAnnounce() {
 // ============================================================================
 function cbJoinChannel(channelName) {
   D2Bot.printToConsole("ChannelBot: Joining channel: " + channelName, sdk.colors.D2Bot.Gray);
-
   var channelBtn = getControl(sdk.controls.Button, 535, 490, 80, 20);
   if (channelBtn) {
     channelBtn.click();
     delay(1000);
   }
-
   ControlAction.setText(sdk.controls.TextBox, 432, 162, 155, 20, channelName);
   delay(500);
-
   var okBtn = getControl(sdk.controls.Button, 671, 433, 96, 32);
   if (okBtn) okBtn.click();
   delay(1500);
@@ -338,11 +423,10 @@ function main() {
     delay(500);
   }
 
-  var initData = cbReadData();
+  var initData  = cbReadData();
   lastTotalRuns = initData.totalRuns;
   lastMilestone = Math.floor(initData.totalRuns / CB_MilestoneEvery) * CB_MilestoneEvery;
-
-  D2Bot.printToConsole("ChannelBot initialized. Runs: " + lastTotalRuns + " | Leaders: " + CB_Leaders.length, sdk.colors.D2Bot.Gray);
+  D2Bot.printToConsole("ChannelBot initialized. Tracked runs: " + lastTotalRuns, sdk.colors.D2Bot.Gray);
 
   while (true) {
     while (me.ingame) delay(1000);
