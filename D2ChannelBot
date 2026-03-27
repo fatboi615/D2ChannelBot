@@ -1,6 +1,6 @@
 /**
  *  @filename    ChannelBot.dbj
- *  @author      based on kolton/theBGuy - multi-leader version (no login required)
+ *  @author      based on kolton/theBGuy - multi-leader version 
  *  @desc        Channel-sitting run tracker bot. Any authorized leader can announce runs instantly.
  */
 
