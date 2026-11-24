@@ -27,6 +27,8 @@ var CB_GameAnnounceFormat = "** Next Game: {game} | Run #{runs} **";
 var CB_MilestoneFormat    = "** {runs} total runs completed! **";
 var CB_StartupMessage     = "** Run tracker online. Authorized leaders can announce games anytime. **";
 var CB_GameAnnouncePrefix = "next game is"; // must be lowercase
+var CB_AnnounceCooldownMs = 3000;    // two leaders announcing inside this window: same game = ignored, different game = last one wins (one run counted)
+var cbLastAnnounce        = { tick: 0, game: "", by: "" };
 
 // Periodic recent games announce
 var CB_AnnounceGameList  = true;
@@ -259,6 +261,19 @@ addEventListener("chatmsg", function (nick, msg) {
 
     var gameName  = remainder.split(/\s+/)[0];
     var nowTick   = getTickCount();
+
+    // another leader just announced: don't count a second run or flood the channel
+    if (cbLastAnnounce.tick && nowTick - cbLastAnnounce.tick < CB_AnnounceCooldownMs && cbLastAnnounce.by !== nick) {
+      if (cbLastAnnounce.game.toLowerCase() === gameName.toLowerCase()) return; // same game, same announcement
+      cbUpdateData(function (d) {
+        d.lastGame = { name: gameName, time: nowTick };
+        if (d.recentGames.length) d.recentGames[0] = gameName;
+      });
+      cbLastAnnounce = { tick: nowTick, game: gameName, by: nick };
+      say("** Correction: Next Game: " + gameName + " **");
+      return;
+    }
+    cbLastAnnounce = { tick: nowTick, game: gameName, by: nick };
     var runTimeMs = (lastRunTick > 0) ? (nowTick - lastRunTick) : 0;
     lastRunTick   = nowTick;
     sessionRunCount += 1;
